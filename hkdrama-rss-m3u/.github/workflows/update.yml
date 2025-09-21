@@ -1,0 +1,77 @@
+name: Update & Publish M3U
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  M3U_DIR: m3u-output
+  M3U_FILE: hk_channels_final.m3u
+  PY_SCRIPT: rss_to_m3u.py
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv (Astral)
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate M3U
+        run: |
+          uv run python "$PY_SCRIPT"
+          test -f "$M3U_DIR/$M3U_FILE" || (echo "Output not found"; exit 1)
+
+      - name: Commit & push changes (if any)
+        run: |
+          if git diff --quiet --exit-code -- "$M3U_DIR/$M3U_FILE"; then
+            echo "No changes to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$M3U_DIR/$M3U_FILE"
+            git commit -m "Auto-update M3U ($(date -u +'%Y-%m-%d %H:%M:%SZ'))"
+            git push
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact (m3u-output/)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.M3U_DIR }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
+    steps:
+      - id: deploy-pages
+        name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
+
+      - name: Echo M3U URL
+        run: |
+          echo "✅ Your IPTV playlist is available at:"
+          echo "${{ steps.deploy-pages.outputs.page_url }}${{ env.M3U_FILE }}"
